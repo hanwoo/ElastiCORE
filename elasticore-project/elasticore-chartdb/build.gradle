@@ -1,0 +1,70 @@
+// ChartDB diagrams and the blueprint DSL, in both directions.
+//
+// A ChartDB diagram (the JSON its "Export > JSON" writes and "Import > JSON"
+// reads) becomes a blueprint - env.yml, model/*.yml and a sidecar that keeps
+// what the DSL has no word for - and a blueprint becomes a diagram.
+//
+//   ./gradlew :elasticore-project:elasticore-chartdb:chartdbToYaml -Pjson=shop.chartdb.json -Pblueprint=src/main/resources/blueprint -Pdomain=shop -Ppackage=com.acme.shop
+//   ./gradlew :elasticore-project:elasticore-chartdb:chartdbToJson -Pblueprint=src/main/resources/blueprint -Pjson=shop.chartdb.json
+//
+// The DSL is read with elasticore-base's own loader, so a blueprint means
+// here what it means to the generator.
+
+plugins {
+    id 'java-library'
+}
+
+description = 'ElastiCORE <-> ChartDB diagram converter'
+
+// The same language level and toolchain as elasticore-base, which it calls.
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
+dependencies {
+    implementation project(':elasticore-project:elasticore-base')
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.22.3'
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    // The tests convert the sample diagram and the sample modules' blueprints.
+    inputs.dir('samples').withPropertyName('samples')
+    inputs.dir(project(':elasticore-project:elasticore-sample-petstore').file('src/main/resources/blueprint'))
+            .withPropertyName('petstoreBlueprint')
+    inputs.dir(project(':elasticore-project:elasticore-template-ddd').file('src/main/resources/blueprint'))
+            .withPropertyName('dddBlueprint')
+    systemProperty 'chartdb.samples', file('samples').absolutePath
+    systemProperty 'chartdb.petstore', project(':elasticore-project:elasticore-sample-petstore').file('src/main/resources/blueprint').absolutePath
+    systemProperty 'chartdb.ddd', project(':elasticore-project:elasticore-template-ddd').file('src/main/resources/blueprint').absolutePath
+    systemProperty 'chartdb.extra', System.getProperty('chartdb.extra', '')
+}
+
+def converter = { String name, String command, List<String> keys ->
+    tasks.register(name, JavaExec) {
+        group = 'elasticore'
+        classpath = sourceSets.main.runtimeClasspath
+        mainClass = 'io.elasticore.chartdb.ChartDbConverter'
+        workingDir = rootProject.projectDir
+        doFirst {
+            def given = [command]
+            keys.each { key ->
+                if (project.hasProperty(key)) given << "--${key}=${project.property(key)}".toString()
+            }
+            args = given
+        }
+    }
+}
+converter('chartdbToYaml', 'to-yaml', ['json', 'blueprint', 'domain', 'package', 'expose', 'force'])
+        .configure { description = 'Writes a blueprint from a ChartDB diagram JSON' }
+converter('chartdbToJson', 'to-json', ['blueprint', 'json', 'database', 'name'])
+        .configure { description = 'Writes a ChartDB diagram JSON from a blueprint' }
+converter('chartdbVerify', 'verify', ['json', 'blueprint', 'work'])
+        .configure { description = 'Converts there and back and reports what did not survive' }
